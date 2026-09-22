@@ -1,7 +1,6 @@
-"""Pont MQTT : ecoute tous les topics BiOrbit, enregistre en base, publie la prevision.
-
-Tourne dans un thread de fond (loop_start) a cote du serveur Flask.
-"""
+# pont mqtt <-> sqlite
+# ecoute les topics, stocke, et balance la prevision d'arrosage
+# tourne en thread a cote de flask (loop_start)
 
 import json
 import logging
@@ -16,17 +15,19 @@ from forecast import Forecaster
 
 log = logging.getLogger("mqtt")
 
+# actions qu'on laisse passer vers le module (le reste = nope)
 ALLOWED_ACTIONS = {"pump", "light", "light_auto", "set", "calibrate"}
 
 
 class Bridge:
     def __init__(self):
-        self.latest: dict[str, dict] = {}  # derniere valeur recue par sous-topic
-        self.lock = threading.Lock()
+        self.latest: dict[str, dict] = {}  # cache memoire : derniere valeur par sous-topic
+        self.lock = threading.Lock()  # flask + mqtt touchent latest en parallele
         self.broker_connected = False
         self.forecaster = Forecaster(FORECAST_WINDOW)
 
         self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="growcore-backend")
+        # auth optionnelle : en atelier on laisse souvent vide
         if MQTT_USER or MQTT_PASSWORD:
             self.client.username_pw_set(MQTT_USER, MQTT_PASSWORD)
         self.client.on_connect = self._on_connect
@@ -34,22 +35,23 @@ class Bridge:
         self.client.on_message = self._on_message
 
     def start(self) -> None:
-        # connect_async + loop_start : reconnexion automatique si le broker redemarre.
+        # async + loop_start = il se reconnecte tout seul si le broker reboot
         self.client.connect_async(MQTT_HOST, MQTT_PORT)
         self.client.loop_start()
 
     def stop(self) -> None:
+        # a appeler a l'arret du serveur
         self.client.loop_stop()
         self.client.disconnect()
 
-    # ---------- Lecture depuis Flask ----------
-
     def snapshot(self) -> dict:
+        # copie rapide pour /api/status (le front poll ca ttes les 2s)
         with self.lock:
             latest = {topic: dict(entry) for topic, entry in self.latest.items()}
         return {"broker_connected": self.broker_connected, "now": time.time(), "topics": latest}
 
     def send_command(self, command: dict) -> tuple[bool, str]:
+        # envoie une cmd depuis le dashboard vers le topic .../cmd
         action = command.get("action")
         if action not in ALLOWED_ACTIONS:
             return False, f"action inconnue : {action!r}"
@@ -60,12 +62,11 @@ class Bridge:
         info = self.client.publish(f"{TOPIC_BASE}/cmd", payload, qos=1)
         if info.rc != mqtt.MQTT_ERR_SUCCESS:
             return False, f"echec de publication (rc={info.rc})"
-        db.add_event("command", payload)
+        db.add_event("command", payload)  # on log aussi en db pour l'historique
         return True, "commande envoyee"
 
-    # ---------- Callbacks MQTT ----------
-
     def _on_connect(self, client, userdata, flags, reason_code, properties):
+        # callback paho : si ok on s'abonne a tout le prefixe
         if reason_code.is_failure:
             log.error("Connexion au broker refusee : %s", reason_code)
             return
@@ -74,19 +75,21 @@ class Bridge:
         client.subscribe(f"{TOPIC_BASE}/#", qos=1)
 
     def _on_disconnect(self, client, userdata, flags, reason_code, properties):
+        # paho retentera, on met juste le flag a false pour le bandeau ui
         self.broker_connected = False
         log.warning("Deconnecte du broker (%s), nouvelle tentative automatique", reason_code)
 
     def _on_message(self, client, userdata, msg):
+        # un msg arrive -> on parse, on met a jour le cache, on stocke
         subtopic = msg.topic.removeprefix(TOPIC_BASE + "/")
         if subtopic == "cmd":
-            return  # nos propres commandes
+            return  # c'est nous qui les envoyons, pas la peine de se reboucler
 
         text = msg.payload.decode("utf-8", errors="replace")
         try:
             data = json.loads(text)
         except json.JSONDecodeError:
-            data = text  # ex. status : "online" / "offline"
+            data = text  # ex: status = "online" / "offline" (pas du json)
 
         now = time.time()
         with self.lock:
@@ -99,13 +102,15 @@ class Bridge:
             log.exception("Erreur de traitement du message %s", msg.topic)
 
     def _store(self, subtopic: str, data, previous, now: float) -> None:
+        # dispatch selon le topic : mesures en readings, changements en events
         if subtopic == "soil" and isinstance(data, dict):
             if not data.get("valid", True):
-                return
+                return  # capteur foireux, on ignore
             db.add_reading("soil", data["moisture"], now)
             db.add_reading("soil_raw", data["raw"], now)
             forecast = self.forecaster.add(now, float(data["moisture"]))
             if forecast:
+                # retain=true pour que le dash ait la prev meme apres un refresh
                 self.client.publish(f"{TOPIC_BASE}/forecast", json.dumps(forecast), retain=True)
 
         elif subtopic == "temp" and isinstance(data, dict):
@@ -117,17 +122,16 @@ class Bridge:
                 db.add_reading("humidity", data["percent"], now)
 
         elif subtopic == "light" and isinstance(data, dict):
-            # Capteur de luminosite (lux) — distinct de light/state (eclairage / actionneur).
+            # attention : "light" = capteur lux, "light/state" = la led/actionneur
             if data.get("lux") is not None:
                 db.add_reading("lux", data["lux"], now)
 
         elif subtopic == "pump/state" and isinstance(data, dict):
-
-            # L'ESP32 republie l'etat toutes les 10 s : on n'enregistre que les changements.
+            # le module republie souvent : on log que les vrais changements
             if previous is not None and data.get("on") != previous.get("on"):
                 db.add_event("pump", "ON" if data.get("on") else "OFF", now)
             if data.get("on"):
-                self.forecaster.reset()
+                self.forecaster.reset()  # nouvel arrosage = on recommence la courbe
 
         elif subtopic == "light/state" and isinstance(data, dict):
             if previous is not None and data.get("on") != previous.get("on"):

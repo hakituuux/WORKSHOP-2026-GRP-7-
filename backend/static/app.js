@@ -1,12 +1,14 @@
-// Dashboard BiOrbite : télémétrie, embeds Grafana (si configurés), repli Chart.js, commandes.
+// front du dashboard biorbite
+// telemetrie live + graphiques (grafana si config, sinon chart.js) + commandes
 
-const STATUS_PERIOD_MS = 2000;
-const HISTORY_PERIOD_MS = 30000;
-const STALE_AFTER_S = 30;
+const STATUS_PERIOD_MS = 2000; // poll status assez souvent
+const HISTORY_PERIOD_MS = 30000; // les courbes, moins urgent
+const STALE_AFTER_S = 30; // au dela on dit que le module est muet
 
-const $ = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id); // raccourci, on en abuse un peu
 
 function setText(id, text, cls = "") {
+  // maj du texte + classe couleur (ok/warn/bad) sans tout casser
   const el = $(id);
   el.textContent = text;
   el.className = el.className.replace(/\b(ok|warn|bad)\b/g, "").trim();
@@ -14,6 +16,7 @@ function setText(id, text, cls = "") {
 }
 
 function formatTime(ts, withDate = false) {
+  // timestamp unix -> heure lisible fr
   const d = new Date(ts * 1000);
   const opts = withDate
     ? { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }
@@ -24,6 +27,7 @@ function formatTime(ts, withDate = false) {
 const STATE_CLASS = { NORMAL: "ok", AUTONOME: "warn", PENURIE: "bad", ERREUR: "bad" };
 
 async function refreshStatus() {
+  // recup le snapshot mqtt et peupler les metriques en haut
   let data;
   try {
     data = await (await fetch("/api/status")).json();
@@ -33,9 +37,10 @@ async function refreshStatus() {
   }
 
   const t = data.topics;
-  const v = (topic) => t[topic]?.value;
+  const v = (topic) => t[topic]?.value; // derniere valeur d'un topic
   const age = (topic) => (t[topic] ? data.now - t[topic].ts : Infinity);
 
+  // bandeau connexion : broker / module / silence
   if (!data.broker_connected) setText("conn", "Broker déconnecté", "bad");
   else if (v("status") !== "online") setText("conn", "Module hors ligne", "bad");
   else if (age("soil") > STALE_AFTER_S) setText("conn", "Module muet", "warn");
@@ -61,7 +66,7 @@ async function refreshStatus() {
   const humidity = v("humidity");
   if (humidity && humidity.percent != null) setText("humidity", `${humidity.percent}`);
 
-  const lightSensor = v("light");
+  const lightSensor = v("light"); // capteur lux (pas light/state)
   if (lightSensor && lightSensor.lux != null) setText("lux", `${Math.round(lightSensor.lux)}`);
 
   const pump = v("pump/state");
@@ -83,16 +88,18 @@ async function refreshStatus() {
 }
 
 function fillSettingIfEmpty(name, value) {
+  // prefill le form seuils sans ecraser si l'user tape deja dedans
   const input = document.querySelector(`#settings [name="${name}"]`);
   if (input && input.value === "" && document.activeElement !== input) input.value = value;
 }
 
-// ---------- Grafana embeds / Chart.js local ----------
+// --- graphiques locaux (repli si pas de grafana) ---
 
 const css = getComputedStyle(document.documentElement);
-const color = (name) => css.getPropertyValue(name).trim();
+const color = (name) => css.getPropertyValue(name).trim(); // lit les css vars
 
 function lineDataset(label, colorVar, yAxisID) {
+  // factory pour pas copier-coller 4 fois la meme config de courbe
   return {
     label,
     data: [],
@@ -104,7 +111,7 @@ function lineDataset(label, colorVar, yAxisID) {
 
 const chartDefaults = {
   maintainAspectRatio: false,
-  animation: false,
+  animation: false, // live data = pas besoin d'anim
   parsing: false,
   elements: { point: { radius: 0 }, line: { borderWidth: 2, tension: 0.2 } },
   interaction: { mode: "nearest", axis: "x", intersect: false },
@@ -180,6 +187,7 @@ const chartClimate = new Chart($("chart-climate"), {
 });
 
 async function refreshHistory() {
+  // charge les 4 series en parallele et update les 2 charts
   const hours = $("hours").value;
   try {
     const [soil, humidity, temp, lux] = await Promise.all(
@@ -194,13 +202,14 @@ async function refreshHistory() {
     chartSoil.update();
     chartClimate.update();
   } catch {
-    /* le bandeau de connexion signale déjà le problème */
+    // le bandeau conn gerera le message, pas la peine de spammer ici
   }
 }
 
 $("hours").addEventListener("change", refreshHistory);
 
 async function setupGrafana() {
+  // si le backend a des urls d'embed, on branch les iframes
   try {
     const cfg = await (await fetch("/api/grafana")).json();
     const mode = $("grafana-mode");
@@ -235,15 +244,13 @@ async function setupGrafana() {
       mode.textContent = "Grafana";
       mode.classList.add("grafana");
       $("grafana-grid").hidden = false;
-      // Garde aussi le local comme contrôle croisé tant que Grafana n'est pas validé.
+      // on garde aussi le local en backup / controle croise
       $("local-charts").hidden = false;
     }
   } catch {
     $("grafana-mode").textContent = "Mode local";
   }
 }
-
-// ---------- Événements ----------
 
 const EVENT_LABEL = {
   pump: "Pompe",
@@ -254,6 +261,7 @@ const EVENT_LABEL = {
 };
 
 async function refreshEvents() {
+  // liste des derniers events en bas a droite
   try {
     const events = await (await fetch("/api/events?limit=30")).json();
     $("events").replaceChildren(
@@ -265,19 +273,18 @@ async function refreshEvents() {
         kind.className = "kind";
         kind.textContent = EVENT_LABEL[e.kind] ?? e.kind;
         const detail = document.createElement("span");
-        detail.textContent = e.detail;
+        detail.textContent = e.detail; // textContent = pas d'injection html
         li.append(time, kind, detail);
         return li;
       }),
     );
   } catch {
-    /* idem */
+    // idem, silencieux
   }
 }
 
-// ---------- Commandes ----------
-
 async function sendCommand(cmd) {
+  // poste une cmd vers /api/cmd puis refresh le journal un peu apres
   try {
     const res = await fetch("/api/cmd", {
       method: "POST",
@@ -292,11 +299,13 @@ async function sendCommand(cmd) {
   setTimeout(refreshEvents, 500);
 }
 
+// boutons data-cmd = json deja pret dans le html
 document.querySelectorAll("button[data-cmd]").forEach((btn) => {
   btn.addEventListener("click", () => sendCommand(JSON.parse(btn.dataset.cmd)));
 });
 
 $("settings").addEventListener("submit", (event) => {
+  // form seuils -> action set (on skip les champs vides)
   event.preventDefault();
   const cmd = { action: "set" };
   for (const [key, value] of new FormData(event.target)) {
@@ -305,6 +314,7 @@ $("settings").addEventListener("submit", (event) => {
   sendCommand(cmd);
 });
 
+// boot : grafana éventuel + premier refresh + intervals
 setupGrafana();
 refreshStatus();
 refreshHistory();

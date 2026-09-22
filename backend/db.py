@@ -1,8 +1,5 @@
-"""Stockage SQLite : mesures (humidite, temperature) et evenements (pompe, etats...).
-
-Une connexion est ouverte a chaque appel : le thread MQTT et les requetes Flask
-ecrivent et lisent en parallele sans partager d'objet sqlite3.
-"""
+# couche sqlite toute simple
+# une connexion par appel -> flask et mqtt peuvent ecrire en meme temps sans se marcher dessus
 
 import sqlite3
 import time
@@ -12,15 +9,15 @@ from config import DB_PATH
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS readings (
-    ts     REAL NOT NULL,   -- horodatage Unix (secondes)
-    metric TEXT NOT NULL,   -- 'soil', 'soil_raw', 'temp', 'humidity', 'lux'
+    ts     REAL NOT NULL,   -- timestamp unix
+    metric TEXT NOT NULL,   -- soil / temp / humidity / lux / etc
     value  REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_readings_metric_ts ON readings (metric, ts);
 
 CREATE TABLE IF NOT EXISTS events (
     ts     REAL NOT NULL,
-    kind   TEXT NOT NULL,   -- 'pump', 'light', 'state', 'status', 'command'
+    kind   TEXT NOT NULL,   -- pump, light, state, status, command...
     detail TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts);
@@ -28,18 +25,21 @@ CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts);
 
 
 def _connect() -> sqlite3.Connection:
+    # helper interne : ouvre + row_factory pour avoir des dict-like
     conn = sqlite3.connect(DB_PATH, timeout=5)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init() -> None:
+    # a lancer au boot : cree tables + mode wal (lectures ok pendant une ecriture)
     with closing(_connect()) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")  # lectures possibles pendant une ecriture
+        conn.execute("PRAGMA journal_mode=WAL")
         conn.executescript(SCHEMA)
 
 
 def add_reading(metric: str, value: float, ts: float | None = None) -> None:
+    # insert une mesure (sol, temp, etc)
     with closing(_connect()) as conn, conn:
         conn.execute(
             "INSERT INTO readings (ts, metric, value) VALUES (?, ?, ?)",
@@ -48,6 +48,7 @@ def add_reading(metric: str, value: float, ts: float | None = None) -> None:
 
 
 def add_event(kind: str, detail: str, ts: float | None = None) -> None:
+    # insert un event (changement pompe, cmd manuelle...)
     with closing(_connect()) as conn, conn:
         conn.execute(
             "INSERT INTO events (ts, kind, detail) VALUES (?, ?, ?)",
@@ -56,9 +57,9 @@ def add_event(kind: str, detail: str, ts: float | None = None) -> None:
 
 
 def history(metric: str, hours: float, max_points: int = 500) -> list[list[float]]:
-    """Mesures des `hours` dernieres heures, moyennees pour ne pas depasser `max_points`."""
+    # historique pour les graphiques : on bucket/moyenne pour pas exploser le front
     since = time.time() - hours * 3600
-    bucket = max(1.0, hours * 3600 / max_points)  # largeur d'un point en secondes
+    bucket = max(1.0, hours * 3600 / max_points)  # largeur d'un point en sec
     with closing(_connect()) as conn:
         rows = conn.execute(
             """
@@ -74,6 +75,7 @@ def history(metric: str, hours: float, max_points: int = 500) -> list[list[float
 
 
 def events(limit: int = 50) -> list[dict]:
+    # derniers events, du plus recent au plus vieux
     with closing(_connect()) as conn:
         rows = conn.execute(
             "SELECT ts, kind, detail FROM events ORDER BY ts DESC LIMIT ?", (limit,)
@@ -82,6 +84,6 @@ def events(limit: int = 50) -> list[dict]:
 
 
 def all_readings():
-    """Toutes les mesures, pour l'export CSV (generateur : pas tout en memoire)."""
+    # pour l'export csv : generateur, on charge pas toute la db d'un coup
     with closing(_connect()) as conn:
         yield from conn.execute("SELECT ts, metric, value FROM readings ORDER BY ts")
