@@ -1,0 +1,23 @@
+# Identifiants (ne jamais publier)
+firmware/include/secrets.h
+broker/passwd
+backend/.env
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+
+# PlatformIO / IDE
+.pio/
+.vscode/
+.idea/
+cmake-build-*/
+CMakeListsPrivate.txt
+
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Divers
+.DS_Store
+Thumbs.db
