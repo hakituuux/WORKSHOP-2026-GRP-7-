@@ -17,7 +17,7 @@ Les capteurs publient via MQTT ; un backend Flask enregistre les mesures et sert
 | Broker Mosquitto | Dossier `firmware/` (annoncé dans le README d’origine, **pas dans le dépôt**) |
 | Backend Flask + SQLite + prévision arrosage | Node-RED, PostgreSQL, Grafana (stack cible BiOrbite) |
 | Dashboard web + simulateur MQTT | Capteurs air humidité / luminosité côté firmware réel |
-| Docs câblage ESP32 (sol, DS18B20, réservoir, pompe, LED) | Câblage ESP8266 + DHT/BH1750 |
+| Docs câblage ESP8266 (sol, DS18B20, réservoir, pompe, LED) | Câblage ESP8266 + DHT/BH1750 |
 
 **Compatible en l’état ?** Oui sur le socle MQTT + dashboard + commandes. À adapter pour coller à BiOrbite : microcontrôleur (ESP8266), capteurs (humidité air + luminosité), et chaîne Node-RED / PostgreSQL / Grafana si vous l’adoptez pleinement.
 
