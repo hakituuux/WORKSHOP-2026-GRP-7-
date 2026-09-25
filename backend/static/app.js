@@ -224,13 +224,15 @@ async function setupGrafana() {
     const map = {
       soil: "gf-soil",
       air: "gf-air",
+      temp: "gf-temp",
       light: "gf-light",
-      overview: "gf-overview",
+      pompe: "gf-pompe",
     };
     let any = false;
     for (const [key, iframeId] of Object.entries(map)) {
       const url = cfg.panels[key];
       const frame = $(iframeId);
+      if (!frame) continue;
       if (url) {
         frame.src = url;
         frame.closest("figure").hidden = false;

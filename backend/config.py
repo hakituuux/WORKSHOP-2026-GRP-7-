@@ -30,5 +30,7 @@ FORECAST_WINDOW = int(os.getenv("FORECAST_WINDOW", "360"))
 # urls d'embed grafana (share > embed). vide = mode chart.js local
 GRAFANA_SOIL_URL = os.getenv("GRAFANA_SOIL_URL", "")
 GRAFANA_AIR_URL = os.getenv("GRAFANA_AIR_URL", "")
+GRAFANA_TEMP_URL = os.getenv("GRAFANA_TEMP_URL", "")
 GRAFANA_LIGHT_URL = os.getenv("GRAFANA_LIGHT_URL", "")
+GRAFANA_POMPE_URL = os.getenv("GRAFANA_POMPE_URL", "")
 GRAFANA_OVERVIEW_URL = os.getenv("GRAFANA_OVERVIEW_URL", "")

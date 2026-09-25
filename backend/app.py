@@ -12,7 +12,9 @@ from config import (
     GRAFANA_AIR_URL,
     GRAFANA_LIGHT_URL,
     GRAFANA_OVERVIEW_URL,
+    GRAFANA_POMPE_URL,
     GRAFANA_SOIL_URL,
+    GRAFANA_TEMP_URL,
     HTTP_HOST,
     HTTP_PORT,
 )
@@ -56,7 +58,9 @@ def grafana():
     panels = {
         "soil": GRAFANA_SOIL_URL,
         "air": GRAFANA_AIR_URL,
+        "temp": GRAFANA_TEMP_URL,
         "light": GRAFANA_LIGHT_URL,
+        "pompe": GRAFANA_POMPE_URL,
         "overview": GRAFANA_OVERVIEW_URL,
     }
     return jsonify(
